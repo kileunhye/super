@@ -58,6 +58,20 @@ export default function Home() {
     if (local) setHistory(JSON.parse(local));
     setGeminiKey(localStorage.getItem("setek-gemini-key") || "");
     setModel(localStorage.getItem("setek-model") || "gemini-3.5-flash-lite");
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    if (supabaseUrl && supabaseKey) {
+      fetch(`${supabaseUrl}/rest/v1/setek_records?select=*&order=created_at.desc&limit=100`, {
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+      }).then(async (response) => {
+        if (!response.ok) throw new Error("Supabase history request failed");
+        const rows = await response.json();
+        const records: SavedRecord[] = rows.map((row: { id: string; student_id: string; grade: string; subject: string; created_at: string; results: SubjectResult[] }) => ({
+          id: row.id, studentId: row.student_id, grade: row.grade, subject: row.subject, createdAt: row.created_at, results: row.results,
+        }));
+        setHistory(records); localStorage.setItem("setek-history", JSON.stringify(records));
+      }).catch(() => setToast("Supabase 테이블 연결을 확인해 주세요. 로컬 저장 내역을 표시합니다."));
+    }
   }, []);
 
   const subjectsLabel = useMemo(() => selectedSubjects.join(" · "), [selectedSubjects]);
@@ -89,10 +103,15 @@ export default function Home() {
     if (!results.length) return;
     const record: SavedRecord = { id: uid(), studentId, grade, subject: subjectsLabel, createdAt: new Date().toISOString(), results };
     const next = [record, ...history]; setHistory(next); localStorage.setItem("setek-history", JSON.stringify(next));
-    setSaved(true); setToast("저장 내역에 추가했습니다. Supabase 연결 시 동일한 구조로 동기화됩니다.");
-    if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/setek_records`, { method: "POST", headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ student_id: studentId, grade, subject: subjectsLabel, results }) });
-    }
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    if (supabaseUrl && supabaseKey) {
+      try {
+        const response = await fetch(`${supabaseUrl}/rest/v1/setek_records`, { method: "POST", headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ student_id: studentId, grade, subject: subjectsLabel, results }) });
+        if (!response.ok) throw new Error("Supabase save failed");
+        setSaved(true); setToast("Supabase에 저장했습니다.");
+      } catch { setToast("Supabase 저장에 실패해 이 브라우저에 임시 저장했습니다."); }
+    } else { setSaved(true); setToast("이 브라우저에 임시 저장했습니다."); }
   }
 
   function downloadText() {
