@@ -19,6 +19,8 @@ type SavedRecord = {
   results: SubjectResult[];
 };
 
+type SupabaseStatus = "checking" | "connected" | "error" | "unconfigured";
+
 const subjects = ["국어", "수학", "영어", "통합사회", "통합과학", "정보"];
 const demoResults: SubjectResult[] = [
   {
@@ -52,6 +54,7 @@ export default function Home() {
   const [geminiKey, setGeminiKey] = useState("");
   const [model, setModel] = useState("gemini-3.5-flash-lite");
   const [toast, setToast] = useState("");
+  const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>("checking");
 
   useEffect(() => {
     const local = localStorage.getItem("setek-history");
@@ -69,9 +72,9 @@ export default function Home() {
         const records: SavedRecord[] = rows.map((row: { id: string; student_id: string; grade: string; subject: string; created_at: string; results: SubjectResult[] }) => ({
           id: row.id, studentId: row.student_id, grade: row.grade, subject: row.subject, createdAt: row.created_at, results: row.results,
         }));
-        setHistory(records); localStorage.setItem("setek-history", JSON.stringify(records));
-      }).catch(() => setToast("Supabase 테이블 연결을 확인해 주세요. 로컬 저장 내역을 표시합니다."));
-    }
+        setHistory(records); localStorage.setItem("setek-history", JSON.stringify(records)); setSupabaseStatus("connected");
+      }).catch(() => { setSupabaseStatus("error"); setToast("Supabase 테이블 연결을 확인해 주세요. 로컬 저장 내역을 표시합니다."); });
+    } else setSupabaseStatus("unconfigured");
   }, []);
 
   const subjectsLabel = useMemo(() => selectedSubjects.join(" · "), [selectedSubjects]);
@@ -109,9 +112,9 @@ export default function Home() {
       try {
         const response = await fetch(`${supabaseUrl}/rest/v1/setek_records`, { method: "POST", headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ student_id: studentId, grade, subject: subjectsLabel, results }) });
         if (!response.ok) throw new Error("Supabase save failed");
-        setSaved(true); setToast("Supabase에 저장했습니다.");
-      } catch { setToast("Supabase 저장에 실패해 이 브라우저에 임시 저장했습니다."); }
-    } else { setSaved(true); setToast("이 브라우저에 임시 저장했습니다."); }
+        setSaved(true); setSupabaseStatus("connected"); setToast("Supabase에 저장했습니다.");
+      } catch { setSupabaseStatus("error"); setToast("Supabase 저장에 실패해 이 브라우저에 임시 저장했습니다."); }
+    } else { setSaved(true); setSupabaseStatus("unconfigured"); setToast("이 브라우저에 임시 저장했습니다."); }
   }
 
   function downloadText() {
@@ -120,6 +123,13 @@ export default function Home() {
   }
 
   function saveSettings() { localStorage.setItem("setek-gemini-key", geminiKey); localStorage.setItem("setek-model", model); setToast("개인 설정을 저장했습니다."); }
+
+  const supabaseLabel = {
+    checking: "Supabase 연결 확인 중",
+    connected: "Supabase 연결됨",
+    error: "Supabase 연결 오류",
+    unconfigured: "Supabase 설정 필요",
+  }[supabaseStatus];
 
   return (
     <main className="app-shell">
@@ -133,7 +143,7 @@ export default function Home() {
         <div className="sidebar-bottom"><button className={active === "settings" ? "nav-item active" : "nav-item"} onClick={() => setActive("settings")}><span>⚙</span> 개인 설정</button><div className="user-card"><div className="avatar">김</div><div><strong>김선생님</strong><small>교사 계정</small></div><span className="more">•••</span></div></div>
       </aside>
       <section className="main-content">
-        <header className="topbar"><div><span className="eyebrow">{active === "write" ? "NEW DRAFT" : active === "history" ? "ARCHIVE" : "PREFERENCES"}</span><h1>{active === "write" ? "세특 작성" : active === "history" ? "저장 내역" : "개인 설정"}</h1></div><div className="top-actions"><span className="connection"><i /> Supabase 연결 준비됨</span><button className="icon-button">?</button><button className="profile-button">김선생님 <span>⌄</span></button></div></header>
+        <header className="topbar"><div><span className="eyebrow">{active === "write" ? "NEW DRAFT" : active === "history" ? "ARCHIVE" : "PREFERENCES"}</span><h1>{active === "write" ? "세특 작성" : active === "history" ? "저장 내역" : "개인 설정"}</h1></div><div className="top-actions"><span className={`connection ${supabaseStatus}`}><i /> {supabaseLabel}</span><button className="icon-button">?</button><button className="profile-button">김선생님 <span>⌄</span></button></div></header>
         {active === "settings" ? <Settings geminiKey={geminiKey} setGeminiKey={setGeminiKey} model={model} setModel={setModel} save={saveSettings} /> : active === "history" ? <History records={history} onOpen={(record) => { setGrade(record.grade); setStudentId(record.studentId); setSelectedSubjects(record.subject.split(" · ")); setResults(record.results); setActive("write"); }} /> : <>
           <div className="progress"><span className="progress-step done"><b>1</b> 입력</span><span className="line done" /><span className={`progress-step ${isGenerating || results.length ? "done" : "current"}`}><b>2</b> 에이전트 실행</span><span className="line" /><span className={`progress-step ${results.length ? "done" : ""}`}><b>3</b> 결과 확인</span></div>
           <div className="content-grid"><div className="input-column"><section className="panel input-panel"><div className="panel-heading"><div><span className="section-number">01</span><h2>학생 활동 입력</h2><p>학생의 활동 키워드나 관찰 내용을 자유롭게 입력해 주세요.</p></div><span className="required">필수 입력</span></div><div className="field-row"><label>학년<select value={grade} onChange={(e) => setGrade(e.target.value)}><option>1학년</option><option>2학년</option><option>3학년</option></select></label><label>학생 식별값<input value={studentId} onChange={(e) => setStudentId(e.target.value)} /></label></div><label className="field-label">대상 과목 <span>복수 선택 가능</span></label><div className="subject-chips">{subjects.map((subject) => <button key={subject} className={selectedSubjects.includes(subject) ? "chip selected" : "chip"} onClick={() => toggleSubject(subject)}>{selectedSubjects.includes(subject) && <span>✓</span>}{subject}</button>)}</div><label className="field-label">활동 키워드 / 관찰 내용 <span>{keywords.length} / 1,000</span></label><textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="예: 모둠 토론에서..." maxLength={1000} /><div className="input-hint">💡 구체적인 행동과 과정이 포함될수록 더 자연스러운 문장이 만들어집니다.</div><button className="generate-button" onClick={generate} disabled={isGenerating}><span>✦</span>{isGenerating ? "에이전트가 작업 중..." : "세특 문구 생성하기"}<kbd>⌘ ↵</kbd></button></section><AgentRail active={isGenerating} complete={results.length > 0} /></div><div className="result-column"><section className="result-header"><div><span className="eyebrow">OUTPUT</span><h2>생성 결과 <span>{results.length ? `${results.length}과목` : "대기 중"}</span></h2></div>{results.length > 0 && <div className="result-actions"><button onClick={downloadText}>↓ 텍스트 다운로드</button><button className="save-button" onClick={saveRecord} disabled={saved}>{saved ? "✓ 저장 완료" : "＋ 저장 내역에 추가"}</button></div>}</section>{results.length ? <div className="result-list">{results.map((item) => <article className="result-card" key={item.subject}><div className="result-card-top"><div className="subject-tag">{item.subject}</div><span className="review-status"><i /> {item.status}</span></div><p className="result-summary">{item.summary}</p><div className="draft-box"><span>세특 초안</span><p>{item.draft}</p></div><div className="review-row"><b>검토 에이전트</b>{item.review.map((line) => <span key={line}>✓ {line}</span>)}</div></article>)}</div> : <div className="empty-result"><div className="empty-orb">✦</div><h3>학생 활동을 입력하면<br />과목별 세특 초안이 이곳에 표시됩니다.</h3><p>수집 · 작성 · 검토 에이전트가 순서대로 작업합니다.</p></div>}<div className="privacy-note">🔒 입력한 내용은 저장 버튼을 누르기 전까지 외부로 전송되지 않습니다.</div></div></div>
