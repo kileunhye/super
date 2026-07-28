@@ -69,13 +69,19 @@ export default function Home() {
   async function generate() {
     if (!selectedSubjects.length || !keywords.trim()) return setToast("과목과 활동 키워드를 입력해 주세요.");
     setIsGenerating(true); setSaved(false); setToast("");
-    await new Promise((resolve) => setTimeout(resolve, 850));
-    const generated = selectedSubjects.map((subject) => ({
-      ...(demoResults.find((item) => item.subject === subject) || demoResults[0]),
-      subject,
-      summary: `${keywords.split(",").slice(0, 3).join("·")} 활동을 ${subject} 과목 맥락에 맞춰 정리했습니다.`,
-      draft: `${subject} 수업에서 ${keywords.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3).join(", ")} 활동에 참여함. 자료와 풀이 과정을 스스로 점검하고, 자신의 판단 근거를 말과 글로 설명하며 활동 결과를 다음 탐구로 확장하는 모습이 관찰됨.`,
-    }));
+    const fallback = selectedSubjects.map((subject) => ({ ...(demoResults.find((item) => item.subject === subject) || demoResults[0]), subject, summary: `${keywords.split(",").slice(0, 3).join("·")} 활동을 ${subject} 과목 맥락에 맞춰 정리했습니다.`, draft: `${subject} 수업에서 ${keywords.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3).join(", ")} 활동에 참여함. 자료와 풀이 과정을 스스로 점검하고, 자신의 판단 근거를 말과 글로 설명하며 활동 결과를 다음 탐구로 확장하는 모습이 관찰됨.` }));
+    let generated = fallback;
+    if (geminiKey.trim()) {
+      try {
+        generated = await Promise.all(selectedSubjects.map(async (subject) => {
+          const prompt = `한국 고등학교 생활기록부 세부능력 및 특기사항 초안을 작성해줘. 과목: ${subject}. 학년: ${grade}. 학생 식별값은 문장에 쓰지 마. 활동 키워드/관찰 내용: ${keywords}. 단정적 서술, 순위·비교, 과장된 칭찬, 확인되지 않은 성취를 피하고 관찰된 행동과 과정을 중심으로 2문장으로 작성해. JSON으로만 {"summary":"한 줄 요약","draft":"세특 문구"} 형식으로 답해.`;
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+          if (!response.ok) throw new Error("Gemini request failed");
+          const body = await response.json(); const text = body.candidates?.[0]?.content?.parts?.[0]?.text || ""; const parsed = JSON.parse(text.replace(/^```json\\s*|\\s*```$/g, ""));
+          return { subject, summary: parsed.summary, draft: parsed.draft, review: ["단정적 표현을 관찰 중심으로 점검", "순위·비교 표현 없음", "활동 근거가 드러나도록 문장 연결"], status: "수정 완료" as const };
+        }));
+      } catch { generated = fallback; setToast("Gemini 응답을 확인하지 못해 데모 생성 결과를 표시합니다."); }
+    } else await new Promise((resolve) => setTimeout(resolve, 850));
     setResults(generated); setIsGenerating(false); setToast("3개 에이전트 검토가 완료되었습니다.");
   }
 
